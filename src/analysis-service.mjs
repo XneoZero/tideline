@@ -1,13 +1,15 @@
 import {randomUUID} from 'node:crypto';
-import {analyzeItem,modelConfig} from './analyzer.mjs';
+import {analyzeItem} from './analyzer.mjs';
+import {createModelRegistry} from './model-registry.mjs';
+import {configReady} from './model-protocols.mjs';
 import {localDay} from './briefs.mjs';
 import {serviceError} from './errors.mjs';
 export const schedulerDefaults={enabled:false,intervalMinutes:360,analysisLimit:3,dailyCallLimit:12,nextRunAt:null};
-export function createAnalysisService(store,{analyze=analyzeItem,now=Date.now}={}){
+export function createAnalysisService(store,{analyze=analyzeItem,now=Date.now,registry=createModelRegistry(store)}={}){
  let active=null;
- return {get active(){return active;},async run(options={}){
+ return {get active(){return active;},status:()=>registry.snapshot(),async run(options={}){
   if(active)throw serviceError('已有分析任务运行中',409);
-  if(!modelConfig().key)throw serviceError('请先在 .env 中配置模型密钥',503);
+  const config=registry.activeConfig();if(!configReady(config))throw serviceError('请先在设置中添加并选择分析模型',503);
   if(options.ids!==undefined&&(!Array.isArray(options.ids)||options.ids.length>20))throw serviceError('ids 最多20条');
   const limit=options.limit??20;if(!Number.isInteger(limit)||limit<1||limit>20)throw serviceError('limit 必须为1到20的整数');
   const candidates=store.all().filter(i=>!i.demo&&i.acquisition?.eligibleForAnalysis!==false&&(!options.ids||options.ids.includes(i.id))&&(!options.sourceId||i.sourceId===options.sourceId)&&(options.retry===true||!['completed','running','uncertain'].includes(i.analysis?.status))).sort((a,b)=>(Date.parse(b.publishedAt)||0)-(Date.parse(a.publishedAt)||0)).slice(0,limit);
@@ -16,7 +18,7 @@ export function createAnalysisService(store,{analyze=analyzeItem,now=Date.now}={
    const settings={...schedulerDefaults,...store.getState('scheduler',{})},day=localDay(now());
    if(!store.reserveCall(day,settings.dailyCallLimit,item.id)){run.budgetExhausted=true;break;}
    store.patch(item.id,{analysis:{status:'running'}});
-   try{const result=await analyze(item);store.patch(item.id,{analysis:result});run.results.push({itemId:item.id,status:'ok',retained:result.retained});}
+   try{const result=await analyze(item,{config});store.patch(item.id,{analysis:result});run.results.push({itemId:item.id,status:'ok',retained:result.retained});}
    catch(e){const uncertain=/timeout|aborted/i.test(e.name+' '+e.message);store.patch(item.id,{analysis:{status:uncertain?'uncertain':'failed',error:e.message,failedAt:new Date(now()).toISOString()}});run.results.push({itemId:item.id,status:'failed',error:e.message,uncertain});}
    run.progress++;store.saveRun(run);
   }const failures=run.results.filter(r=>r.status==='failed').length;run.status=run.budgetExhausted?'budget_exhausted':failures?(failures===run.results.length?'failed':'partial'):'completed';return run;

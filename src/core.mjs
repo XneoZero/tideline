@@ -13,7 +13,7 @@ export function createStore(path = ':memory:') {
   db.exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS items(id TEXT PRIMARY KEY, fingerprint TEXT UNIQUE, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, body TEXT NOT NULL);`);
   db.exec(`CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS model_calls(id TEXT PRIMARY KEY,day TEXT NOT NULL,itemId TEXT NOT NULL); CREATE TABLE IF NOT EXISTS briefs(day TEXT PRIMARY KEY,body TEXT NOT NULL);`);
   const all = () => db.prepare('SELECT body FROM items ORDER BY rowid DESC').all().map(r=>JSON.parse(r.body));
-  return { db, all,
+  return { db, all,memoryOnly:path===':memory:',
     getState: (key,fallback=null)=>{const row=db.prepare('SELECT body FROM state WHERE key=?').get(key);return row?JSON.parse(row.body):fallback;},
     setState: (key,value)=>db.prepare('INSERT OR REPLACE INTO state VALUES (?,?)').run(key,JSON.stringify(value)),
     jobs:()=>db.prepare('SELECT body FROM jobs ORDER BY rowid DESC LIMIT 100').all().map(r=>JSON.parse(r.body)),

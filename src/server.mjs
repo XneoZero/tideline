@@ -12,6 +12,8 @@ import {buildDailyBrief} from './briefs.mjs';
 import {xStatus,openXLogin,xPeople,normalizeXSource} from './x-collector.mjs';
 import {registerAccountRoutes} from './account-routes.mjs';
 import {registerAstrBotRoutes} from './astrbot-routes.mjs';
+import {createModelRegistry} from './model-registry.mjs';
+import {registerModelRoutes} from './model-routes.mjs';
 const readEnabled=(value,fallback=true)=>{
  if(value===undefined||value===null||value==='')return fallback;
  if(value===true||value===1||['1','true','on'].includes(value))return true;
@@ -20,11 +22,12 @@ const readEnabled=(value,fallback=true)=>{
 };
 export function createApp(store) {
  const app=express(); app.disable('x-powered-by');
- const collection=createCollectionService(store),analysis=createAnalysisService(store),scheduler=createScheduler(store,{collection,analysis});app.locals.scheduler=scheduler;
+ const registry=createModelRegistry(store),collection=createCollectionService(store),analysis=createAnalysisService(store,{registry}),scheduler=createScheduler(store,{collection,analysis});app.locals.scheduler=scheduler;
  app.use((req,res,next)=>{if(req.headers.origin && req.headers.origin!==`http://${req.headers.host}`)return res.status(403).json({error:'不允许跨域访问'});next();});
  app.use(express.json({limit:'2mb'}));
+ registerModelRoutes(app,store,registry);
  app.use('/api/v1/whale',(req,res,next)=>{const token=process.env.FEED_API_TOKEN;if(!token)return res.status(503).json({error:'请配置 FEED_API_TOKEN 后启用 Whale 接口'});if(req.headers.authorization!==`Bearer ${token}`)return res.status(401).json({error:'令牌无效'});next();});
- app.get('/api/v1/health',(_,res)=>res.json({status:'ok',application:'tideline-information-feeding',version:'0.6.0'}));
+ app.get('/api/v1/health',(_,res)=>res.json({status:'ok',application:'tideline-information-feeding',version:'0.7.0'}));
  registerAstrBotRoutes(app,store);
  registerAccountRoutes(app,store);
  app.get('/api/v1/source-presets',(_,res)=>res.json(builtInSources));

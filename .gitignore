@@ -32,3 +32,6 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+
+!/docs/model-management.md
+!/docs/models-demo.png

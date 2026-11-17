@@ -1,3 +1,4 @@
+import {modelPanel} from './model-manager.js';
 import {operationsSettings} from './operations.js';
 import {scopeLabel} from './labels.js';
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -140,7 +141,7 @@ export function settings(sources, model, runs = [], extra = {}) {
   const batchDisabled = batch.filter(s => s.enabled === false);
   const imports = sources.filter(s => s.id === 'ai-information');
   const typeLabel = {rss:'RSS/Atom', json:'统一 JSON', 'public-feed':'公开 Feed', news:'新闻正文采集', x:'X人物动态', bilibili:'B站账号动态', xiaohongshu:'小红书笔记', demo:'演示'};
-  return `${operationsSettings(extra,esc)}<section class="panel" style="margin-top:18px"><div class="panel-head"><h2>内置真实新闻来源</h2><button id="install-presets" class="primary">添加官方与媒体来源</button></div><p class="muted">OpenAI 官方 RSS、Anthropic 官方新闻、量子位。每个来源默认采集最新3篇；优先获取正文，失败时保留错误，订阅摘要可用时明确标记。重复 URL 不再抓取正文，不改动已有来源开关。</p></section><div class="settings-grid">
+  return `${modelPanel(extra.models)}${operationsSettings(extra,esc)}<section class="panel" style="margin-top:18px"><div class="panel-head"><h2>内置真实新闻来源</h2><button id="install-presets" class="primary">添加官方与媒体来源</button></div><p class="muted">OpenAI 官方 RSS、Anthropic 官方新闻、量子位。每个来源默认采集最新3篇；优先获取正文，失败时保留错误，订阅摘要可用时明确标记。重复 URL 不再抓取正文，不改动已有来源开关。</p></section><div class="settings-grid">
     <section class="panel">
       <div class="panel-head"><h2>新增 AI 信息来源</h2></div>
       <form id="add" class="form-grid">
@@ -156,10 +157,6 @@ export function settings(sources, model, runs = [], extra = {}) {
       </form>
     </section>
     <section class="panel">
-      <div class="panel-head"><h2>模型分析服务</h2><span class="badge ${model.configured ? '' : 'warning'}">${model.configured ? '已配置' : '未配置'}</span></div>
-      <p class="muted">参考 AI information 的中文信号分析流程，支持 DeepSeek 或兼容 Chat Completions 的模型服务。</p>
-      <pre>FEED_LLM_API_KEY=你的密钥\nFEED_LLM_BASE_URL=https://api.deepseek.com\nFEED_LLM_MODEL=deepseek-chat</pre>
-      <p class="muted">DeepSeek 官方 API 按 tokens 计费，不等同于免费网页服务。在 .env 配置并重启，密钥仅在服务端读取。当前模型：${esc(model.model)}。</p>
       <h3>接入已有 AI information</h3>
       <p class="muted">导入公开导出文件，不读取数据库、密钥或浏览器登录态。导入解读会单独标记，重新分析后仍保留。</p>
       <div class="actions"><button id="import-local">导入本机公开导出</button><label>上传 JSON <input id="import-file" type="file" accept=".json,application/json" aria-label="上传公开 JSON"></label></div>

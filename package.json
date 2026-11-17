@@ -1,14 +1,22 @@
 {
   "name": "tideline-information-feeding",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Local-first AI information collection, account feeds and bot integrations",
   "main": "src/server.mjs",
   "scripts": {
     "start": "node src/server.mjs",
     "test": "node --test --test-isolation=none --test-concurrency=1 test/*.test.mjs",
-    "test:browser": "node test/browser-smoke.cjs"
+    "test:browser": "node test/browser-smoke.cjs",
+    "test:models-browser": "node test/models-browser.cjs"
   },
-  "keywords": [],
+  "keywords": [
+    "ai",
+    "rss",
+    "local-first",
+    "news",
+    "astrbot",
+    "information-feed"
+  ],
   "author": "XneoZero",
   "license": "MIT",
   "type": "module",
@@ -24,5 +32,10 @@
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "homepage": "https://github.com/XneoZero/tideline#readme",
+  "bugs": {
+    "url": "https://github.com/XneoZero/tideline/issues"
+  },
+  "private": true
 }
