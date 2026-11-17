@@ -54,8 +54,10 @@ const {chromium}=require('playwright');
     await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('已启用'));
     if(await page.isDisabled('#refresh'))throw new Error('重新启用后采集按钮仍禁用');
 
-    await page.setInputFiles('#import-file',{name:'test-public.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({signals:[{originalTitle:'QA 测试夹具 · 非真实新闻',originalBody:'fixture',originalUrl:'https://example.com/qa',sourceKind:'x_person',authorHandle:'test',title:'QA 公开导出测试',summaryZh:'仅用于导入流程测试'}]}))});
-    await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('已导入'));
+    store.ingest([{title:'QA 人物筛选夹具',content:'fixture',url:'https://example.com/qa',sourceKind:'x_person',authorHandle:'test'}],{id:'fixture-person',name:'测试人物',type:'json',kind:'x_person'},'fixture');
+    await page.reload();
+    await page.waitForSelector('#add');
+    if(await page.locator('#import-file, #import-local').count())throw new Error('已删除的导入入口仍显示');
     await page.click('nav [data-view=signals]');
     await page.selectOption('#kind','x_person');
     await page.waitForSelector('.card');
@@ -72,7 +74,7 @@ const {chromium}=require('playwright');
       if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error(view+' 移动端横向溢出');
     }
     if(errors.length)throw new Error(errors.join('\n'));
-    console.log('Browser passed: dashboard, collect, detail, save, source form, source toggle/disabled error, public Feed upload, person filter, monitor, six mobile views');
+    console.log('Browser passed: dashboard, collect, detail, save, source form, source toggle/disabled error, person filter, monitor, six mobile views');
   }finally{
     await browser.close();
     await new Promise(r=>server.close(r));

@@ -9,7 +9,7 @@ export const titles = {
   briefs: ['信号简报', '已分析信号按重要性汇总，每条解读都可返回原文。'],
   saved: ['稍后阅读', '保存值得回看的信号。'],
   monitor: ['运行监控', '查看真实采集与分析结果，失败、跳过和空运行也会保留。'],
-  settings: ['系统设置', '管理 AI 来源启停、公开数据导入和服务端模型配置。']
+  settings: ['系统设置', '管理 AI 来源启停、自动运行和模型配置。']
 };
 export const empty = s => `<div class="empty">${esc(s)}</div>`;
 export const kindLabel = k => ({official:'官方动态',media:'媒体资讯',x_person:'人物动态',mixed:'混合来源',account:'账号动态'}[k] || '媒体资讯');
@@ -51,7 +51,7 @@ export function cards(items) {
         <small>${i.read ? '已读' : '未读'}</small>
       </div>
     </article>`;
-  }).join('') || empty('当前范围没有信息。请采集来源，或在系统设置中导入公开数据。');
+  }).join('') || empty('当前范围没有信息。请在系统设置添加来源并开始采集。');
 }
 
 function lastResultFor(runs, id) {
@@ -141,7 +141,7 @@ export function settings(sources, model, runs = [], extra = {}) {
   const batchDisabled = batch.filter(s => s.enabled === false);
   const imports = sources.filter(s => s.id === 'ai-information');
   const typeLabel = {rss:'RSS/Atom', json:'统一 JSON', 'public-feed':'公开 Feed', news:'新闻正文采集', x:'X人物动态', bilibili:'B站账号动态', xiaohongshu:'小红书笔记', demo:'演示'};
-  return `${modelPanel(extra.models)}${operationsSettings(extra,esc)}<section class="panel" style="margin-top:18px"><div class="panel-head"><h2>内置真实新闻来源</h2><button id="install-presets" class="primary">添加官方与媒体来源</button></div><p class="muted">OpenAI 官方 RSS、Anthropic 官方新闻、量子位。每个来源默认采集最新3篇；优先获取正文，失败时保留错误，订阅摘要可用时明确标记。重复 URL 不再抓取正文，不改动已有来源开关。</p></section><div class="settings-grid">
+  return `${modelPanel(extra.models)}${operationsSettings(extra,esc)}<section class="panel" style="margin-top:18px"><div class="panel-head"><h2>内置真实新闻来源</h2><button id="install-presets" class="primary">添加官方与媒体来源</button></div><p class="muted">OpenAI 官方 RSS、Anthropic 官方新闻、量子位。每个来源默认采集最新3篇；优先获取正文，失败时保留错误，订阅摘要可用时明确标记。重复 URL 不再抓取正文，不改动已有来源开关。</p></section><div style="margin-top:18px">
     <section class="panel">
       <div class="panel-head"><h2>新增 AI 信息来源</h2></div>
       <form id="add" class="form-grid">
@@ -155,11 +155,6 @@ export function settings(sources, model, runs = [], extra = {}) {
         <label class="check-line"><input name="enabled" type="checkbox" checked> 添加后立即启用，并参与批量采集</label>
         <button class="primary">＋ 添加来源</button>
       </form>
-    </section>
-    <section class="panel">
-      <h3>接入已有 AI information</h3>
-      <p class="muted">导入公开导出文件，不读取数据库、密钥或浏览器登录态。导入解读会单独标记，重新分析后仍保留。</p>
-      <div class="actions"><button id="import-local">导入本机公开导出</button><label>上传 JSON <input id="import-file" type="file" accept=".json,application/json" aria-label="上传公开 JSON"></label></div>
     </section>
   </div>
   <section class="panel" style="margin-top:22px">
