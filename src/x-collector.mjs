@@ -1,10 +1,11 @@
+import {monitorLogin} from './login-monitor.mjs';
 import {chromium} from 'playwright';
 import {fileURLToPath} from 'node:url';
 import {mkdirSync} from 'node:fs';
 import {serviceError} from './errors.mjs';
 import {resolveXProxy} from './x-proxy.mjs';
 const profile=fileURLToPath(new URL('../data/x-edge-profile',import.meta.url));
-let occupied=false,loginContext=null,loginTimer=null;
+let occupied=false,loginContext=null;
 let state={status:'not_checked',message:'使用本项目独立 Edge 登录目录，首次需要手动登录'};
 export const xStatus=()=>({...state,busy:occupied,profileIsIsolated:true});
 export const xPeople=[['Sam Altman','sama'],['Andrej Karpathy','karpathy'],['Elon Musk','elonmusk'],['Anthropic','AnthropicAI']].map(([name,handle])=>({id:'x-'+handle.toLowerCase(),name:'X · '+name,type:'x',kind:'x_person',authorName:name,handle,url:'https://x.com/'+handle,enabled:false,limit:3}));
@@ -21,12 +22,12 @@ async function launch(headless){
 async function loggedIn(page){return page.evaluate(()=>Boolean(document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"], [data-testid="SideNav_NewTweet_Button"]'))&&!/\/i\/flow\/login|\/login/.test(location.pathname));}
 export async function openXLogin(){
  if(occupied)throw serviceError('X 浏览器正被使用，请稍后重试',409);occupied=true;state={status:'opening',message:'正在打开独立 Edge 登录窗口'};
- try{loginContext=await launch(false);const page=loginContext.pages()[0]||await loginContext.newPage();await page.goto('https://x.com/home',{waitUntil:'domcontentloaded',timeout:45000});state={status:'awaiting_login',message:'请在独立 Edge 窗口手动登录 X；成功后窗口会自动关闭'};
-  const deadline=Date.now()+5*60000;
-  loginContext.on('close',()=>{if(loginTimer)clearInterval(loginTimer);occupied=false;loginContext=null;if(state.status==='awaiting_login')state={status:'closed',message:'登录窗口已关闭，可重新连接'};});
-  loginTimer=setInterval(async()=>{try{if(await loggedIn(page)){state={status:'ready',message:'已检测到登录，后续采集将复用本项目登录状态',checkedAt:new Date().toISOString()};clearInterval(loginTimer);await loginContext?.close();}else if(Date.now()>deadline){state={status:'login_timeout',message:'登录窗口等待超时，请重新连接'};clearInterval(loginTimer);await loginContext?.close();}}catch{clearInterval(loginTimer);}},2000);loginTimer.unref();return xStatus();
+ try{loginContext=await launch(false);const page=loginContext.pages()[0]||await loginContext.newPage();await page.goto('https://x.com/home',{waitUntil:'domcontentloaded',timeout:45000});state={status:'awaiting_login',message:'请在独立 Edge 窗口登录 X 或退出旧账号后切换；完成后关闭窗口或点击“完成登录”'};
+  const context=loginContext;
+  monitorLogin(context,{check:()=>loggedIn(page),intervalMs:2000,onStatus:ready=>{state={status:ready?'ready':'awaiting_login',message:ready?'已检测到登录，窗口保持打开；可退出旧账号并切换，完成后请关闭窗口或点击“完成登录”':'请在 X 窗口登录或切换账号，完成后关闭窗口或点击“完成登录”',checkedAt:new Date().toISOString()};},onClose:()=>{occupied=false;loginContext=null;const ready=state.status==='ready';state={status:ready?'ready':'closed',message:ready?'登录窗口已关闭，后续采集将使用当前保存的 X 账号':'登录窗口已关闭，可重新连接或切换账号',checkedAt:new Date().toISOString()};}});return xStatus();
  }catch(e){await loginContext?.close().catch(()=>{});loginContext=null;occupied=false;state={status:'network_or_launch_error',message:'无法打开 X 登录页，请检查 Edge 和 FEED_X_PROXY；'+e.message.split('\n')[0]};throw serviceError(state.message,503);}
 }
+export async function finishXLogin(){await loginContext?.close();return xStatus();}
 // 与真实浏览器共用的 DOM 解析器；可用离线 HTML 夹具验证，不请求私有 GraphQL。
 export function extractVisibleX(document,handle,cutoffIso){
  const cutoff=Date.parse(cutoffIso),posts=[],skipped=[];const articles=[...document.querySelectorAll('article[data-testid="tweet"],article')];const seen=new Set();
