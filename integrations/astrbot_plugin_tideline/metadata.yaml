@@ -1,0 +1,11 @@
+name: astrbot_plugin_tideline
+display_name: 潮汐 AI 资讯
+short_desc: 只读查询潮汐已分析资讯、简报与来源
+desc: 使用独立只读令牌接入 Tideline，不触发采集或付费模型调用。
+version: v0.1.0
+author: XneoZero
+repo: https://github.com/XneoZero/tideline
+astrbot_version: ">=4.5.0"
+support_platforms:
+  - aiocqhttp
+  - qq_official

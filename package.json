@@ -1,0 +1,28 @@
+{
+  "name": "tideline-information-feeding",
+  "version": "0.6.0",
+  "description": "Local-first AI information collection, account feeds and bot integrations",
+  "main": "src/server.mjs",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test --test-isolation=none --test-concurrency=1 test/*.test.mjs",
+    "test:browser": "node test/browser-smoke.cjs"
+  },
+  "keywords": [],
+  "author": "XneoZero",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "express": "^5.3.0",
+    "fast-xml-parser": "^5.12.1",
+    "playwright": "^1.65.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XneoZero/tideline.git"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
