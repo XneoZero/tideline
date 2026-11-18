@@ -8,7 +8,10 @@ export function normalizeSocialPost(raw,source,{now=Date.now()}={}){
  const u=new URL(raw.url,source.url);if(!['http:','https:'].includes(u.protocol)||u.username||u.password)throw new Error('非法动态地址');
  let id,url;
  if(source.type==='bilibili'){
-  id=u.hostname==='t.bilibili.com'?u.pathname.match(/^\/(\d+)\/?$/)?.[1]:u.hostname==='www.bilibili.com'?u.pathname.match(/^\/opus\/(\d+)\/?$/)?.[1]:null;if(!id)throw new Error('非法Bilibili动态地址');url='https://t.bilibili.com/'+id;
+  const videoId=u.hostname==='www.bilibili.com'?u.pathname.match(/^\/video\/(BV[a-zA-Z0-9]{10})\/?$/)?.[1]:null;
+  id=u.hostname==='t.bilibili.com'?u.pathname.match(/^\/(\d+)\/?$/)?.[1]:u.hostname==='www.bilibili.com'?u.pathname.match(/^\/opus\/(\d+)\/?$/)?.[1]:null;
+  if(!id&&!videoId)throw new Error('非法Bilibili动态地址');
+  url=videoId?'https://www.bilibili.com/video/'+videoId+'/':'https://t.bilibili.com/'+id;
   if(raw.authorId&&String(raw.authorId)!==source.accountId)throw new Error('动态作者与关注账号不一致');
   if(raw.authorUrl&&(new URL(raw.authorUrl).hostname!=='space.bilibili.com'||new URL(raw.authorUrl).pathname.split('/')[1]!==source.accountId))throw new Error('动态作者不匹配');
  }else{
@@ -27,9 +30,10 @@ export function parseBilibiliFeed(payload,source,{now=Date.now()}={}){
  const rows=[],warnings=[];
  for(const item of payload.data.items){try{const m=item.modules,author=m?.module_author,d=m?.module_dynamic,major=d?.major;
   if(!item.id_str||!author?.mid)throw new Error('缺少动态ID或作者');
-  const desc=d?.desc?.text||major?.opus?.summary?.text||'',video=major?.archive;
+  const video=major?.archive,article=major?.article;
+  const desc=d?.desc?.text||major?.opus?.summary?.text||article?.desc||'';
   const content=[...new Set([desc,video?.title,video?.desc].filter(Boolean))].join('\n\n');
-  rows.push(normalizeSocialPost({url:'https://t.bilibili.com/'+item.id_str,title:video?.title||major?.opus?.title||desc.slice(0,160),content,bodyAvailable:Boolean(desc||video?.desc),rawTime:String(author.pub_ts||''),authorId:String(author.mid),authorName:author.name,pinned:/置顶/.test(m?.module_tag?.text||''),repost:item.type==='DYNAMIC_TYPE_FORWARD',method:'bilibili-public-feed'},source,{now}));
+  rows.push(normalizeSocialPost({url:'https://t.bilibili.com/'+item.id_str,title:video?.title||major?.opus?.title||article?.title||desc.slice(0,160),content,bodyAvailable:Boolean(desc||video?.desc),rawTime:String(author.pub_ts||''),authorId:String(author.mid),authorName:author.name,pinned:/置顶/.test(m?.module_tag?.text||''),repost:item.type==='DYNAMIC_TYPE_FORWARD',method:'bilibili-public-feed'},source,{now}));
  }catch(e){warnings.push({error:e.message});}}
  if(!rows.length&&payload.data.items.length&&warnings.some(w=>!/跳过置顶|超出关注时间范围/.test(w.error)))throw new Error('Bilibili动态无法验证：'+warnings.map(w=>w.error).join('；'));
  const result=rows.sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt)).slice(0,source.limit||3);result.warnings=warnings;return result;
@@ -38,13 +42,30 @@ export async function collectSocial(input,{seen=()=>false}={}){
  const source={...input,...normalizeAccount({...input,platform:input.type})};
  let publicApiWarning=null;
  if(source.type==='bilibili'){
-  try{const response=await fetch('https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid='+source.accountId,{signal:AbortSignal.timeout(12000),headers:{'Referer':source.url,'User-Agent':'Mozilla/5.0'}});if(response.ok){return parseBilibiliFeed(await response.json(),source);}publicApiWarning={reason:'public_api_unavailable',error:'HTTP '+response.status()};}catch(e){publicApiWarning={reason:'public_api_unavailable',error:e.message.split('\n')[0]};}
+  try{const response=await fetch('https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid='+source.accountId,{signal:AbortSignal.timeout(12000),headers:{'Referer':source.url,'User-Agent':'Mozilla/5.0'}});if(response.ok){return parseBilibiliFeed(await response.json(),source);}publicApiWarning={reason:'public_api_unavailable',error:'HTTP '+response.status};}catch(e){publicApiWarning={reason:'public_api_unavailable',error:e.message.split('\n')[0]};}
  }
  return withPlatformPage(source.type,async page=>{
+  const browserFeed=source.type==='bilibili'?page.waitForResponse(response=>{
+   const url=new URL(response.url());
+   return url.origin==='https://api.bilibili.com'
+    &&url.pathname==='/x/polymer/web-dynamic/v1/feed/space'
+    &&url.searchParams.get('host_mid')===source.accountId;
+  },{timeout:25000}).catch(()=>null):null;
   const response=await page.goto(source.type==='bilibili'?source.url+'/dynamic':source.url,{waitUntil:'domcontentloaded',timeout:45000});
   if(response&&response.status()>=400)throw serviceError('平台主页访问失败 HTTP '+response.status(),503);
-  const selector=source.type==='bilibili'?'.bili-dyn-item, .empty-state, .bili-mini-login':'section.note-item, .note-item, .login-container, .empty-container';
-  await page.waitForSelector(selector,{timeout:15000}).catch(()=>{});await page.mouse.wheel(0,600);await page.waitForTimeout(500);
+  if(source.type==='bilibili'){
+   const profile=new URL(page.url());
+   if(profile.hostname!=='space.bilibili.com'||profile.pathname.split('/')[1]!==source.accountId)throw new Error('Bilibili 动态页未打开指定账号');
+   const feed=await browserFeed;
+   if(feed?.ok()){
+    try{return parseBilibiliFeed(await feed.json(),source);}
+    catch(error){publicApiWarning={reason:'browser_feed_unavailable',error:error.message.split('\n')[0]};}
+   }
+   await page.waitForSelector('.bili-dyn-item, .bili-dyn-list__empty, .empty-state',{timeout:5000}).catch(()=>{});
+  }else{
+   await page.waitForSelector('section.note-item, .note-item, .login-container, .empty-container',{timeout:15000}).catch(()=>{});
+   await page.mouse.wheel(0,600);await page.waitForTimeout(500);
+  }
   const snapshot=await page.evaluate('('+readSocialDom.toString()+')(document,'+JSON.stringify(source.type)+')');
   if(snapshot.blocked)throw serviceError('PLATFORM_BLOCKED: 平台要求安全验证或限制访问，请在连接窗口人工处理',429);
   if(!snapshot.cards.length){if(snapshot.login)throw serviceError('AUTH_REQUIRED: 请先连接平台并手动登录',401);if(snapshot.empty)return [];throw new Error('PAGE_UNAVAILABLE: 未发现账号动态，不能判为无新内容');}
@@ -57,7 +78,13 @@ export async function collectSocial(input,{seen=()=>false}={}){
      const canonical='https://www.xiaohongshu.com/explore/'+stable.toLowerCase();
      if(seen(canonical)){rows.push({title:card.title||'已采集笔记',url:canonical});continue;}
      await page.goto(note.href,{waitUntil:'domcontentloaded',timeout:20000});await page.waitForSelector('#noteContainer, .note-detail, .note-detail-mask, .login-container',{timeout:10000}).catch(()=>{});
-     const detail=await page.evaluate('('+readXhsDetail.toString()+')(document)');if(!detail)throw new Error('笔记正文不可见，可能需要登录或页面结构变化');raw={...card,...detail,url:note.href};
+     const detail=await page.evaluate('('+readXhsDetail.toString()+')(document)');if(!detail){
+      const state=await page.evaluate(()=>({text:(document.body?.innerText||'').slice(0,3000),login:Boolean(document.querySelector('.login-container, .login-modal, .login-panel'))}));
+      if(/安全验证|访问受限|请求过于频繁|异常流量|验证后继续/.test(state.text))throw serviceError('PLATFORM_BLOCKED: 笔记页要求安全验证，请在连接窗口人工处理',429);
+      if(state.login||/\/login(?:\?|$)/.test(page.url()))throw serviceError('AUTH_REQUIRED: 笔记页要求登录，请重新连接小红书',401);
+      if(/笔记不存在|内容不存在|无法展示|暂时无法浏览|已被删除|你访问的页面不见了/.test(state.text))throw new Error('NOTE_UNAVAILABLE: 笔记链接不可访问或签名已失效');
+      throw new Error('NOTE_PAGE_UNAVAILABLE: 未发现可见正文，页面路径 '+new URL(page.url()).pathname);
+     }raw={...card,...detail,url:note.href};
     }
     rows.push(normalizeSocialPost(raw,source));if(rows.length>=source.limit)break;
    }catch(e){warnings.push({error:e.message});}

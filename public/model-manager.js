@@ -1,7 +1,20 @@
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-export function modelPanel(s={}){
+export function modelPanel(s={},scheduler={}){
  const providers=s.providers||[];
- return `<section class="panel model-panel"><div class="panel-head"><h2>模型分析服务</h2><button class="primary" data-model-add>＋ 添加模型</button></div><p class="muted">选择厂商、填写 API，即可开始分析。支持多连接管理，切换后下一批分析立即生效。</p><label>当前分析模型<select id="active-model" aria-label="当前分析模型"><option value="none" ${s.activeId==='none'?'selected':''}>关闭模型分析</option><option value="env" ${s.activeId==='env'?'selected':''}>环境变量配置${s.environment?.configured?' · '+esc(s.environment.model):' · 未配置'}</option>${providers.map(p=>`<option value="${p.id}" ${s.activeId===p.id?'selected':''}>${esc(p.name)} · ${esc(p.model)}</option>`).join('')}</select></label><div class="model-connections">${providers.map(p=>`<article class="model-connection"><div><h3>${esc(p.name)} ${s.activeId===p.id?'<span class="badge">使用中</span>':''}</h3><p>${esc(p.model)}</p><small>${esc(p.baseUrl)} · ${p.hasKey?'密钥已保存':'无需密钥'}</small></div><div class="actions"><button data-model-edit="${p.id}">编辑</button><button data-model-delete="${p.id}">删除</button></div></article>`).join('')||'<p class="muted">还没有保存的模型连接，点击“添加模型”开始。</p>'}</div>${s.environment?.configured?'<button data-model-import>导入环境变量配置</button>':''}<p class="muted">API 费用由厂商收取；本地模型可选择无需密钥。密钥保存在本机服务端，页面不会回显。</p></section>`;
+ const limit=scheduler.config?.dailyCallLimit??12;
+ const used=scheduler.usedCallsToday??0;
+ const remaining=Math.max(0,limit-used);
+ const budget=`<form id="model-budget-form" class="form-grid model-budget">
+ <h3>每日模型调用额度</h3>
+ <p class="muted" id="model-budget-usage">今日已用 ${used} 次，剩余 ${remaining} 次。</p>
+ <div class="form-row"><label>每日调用上限（次）<input name="dailyCallLimit" type="number" min="0" max="100" step="1" value="${limit}" aria-describedby="model-budget-usage model-budget-help" required></label><button type="submit" class="primary">保存调用上限</button></div>
+ <p class="muted" id="model-budget-help">手动分析、定时分析和生成测试共用上限，失败尝试也计入。每天北京时间零点重置。设为 0 可暂停模型调用。API 实际费用由厂商按用量计算。</p>
+ </form>`;
+ const baseUrl=(s.activeId==='env'?s.environment:providers.find(p=>p.id===s.activeId))?.baseUrl;
+ const deepseekHint=/^https:\/\/api\.deepseek\.com(?:[/:]|$)/i.test(baseUrl||'')
+  ?'<p class="muted">当前使用 DeepSeek API，按 Token 计费。<a href="https://api-docs.deepseek.com/zh-cn/quick_start/pricing/" target="_blank" rel="noopener noreferrer">查看 API 定价</a></p>'
+  :'';
+ return `<section class="panel model-panel"><div class="panel-head"><h2>模型分析服务</h2><button class="primary" data-model-add>＋ 添加模型</button></div><p class="muted">选择厂商、填写 API，即可开始分析。支持多连接管理，切换后下一批分析立即生效。</p><label>当前分析模型<select id="active-model" aria-label="当前分析模型"><option value="none" ${s.activeId==='none'?'selected':''}>关闭模型分析</option><option value="env" ${s.activeId==='env'?'selected':''}>环境变量配置${s.environment?.configured?' · '+esc(s.environment.model):' · 未配置'}</option>${providers.map(p=>`<option value="${p.id}" ${s.activeId===p.id?'selected':''}>${esc(p.name)} · ${esc(p.model)}</option>`).join('')}</select></label>${deepseekHint}${budget}<div class="model-connections">${providers.map(p=>`<article class="model-connection"><div><h3>${esc(p.name)} ${s.activeId===p.id?'<span class="badge">使用中</span>':''}</h3><p>${esc(p.model)}</p><small>${esc(p.baseUrl)} · ${p.hasKey?'密钥已保存':'无需密钥'}</small></div><div class="actions"><button data-model-edit="${p.id}">编辑</button><button data-model-delete="${p.id}">删除</button></div></article>`).join('')||'<p class="muted">还没有保存的模型连接，点击“添加模型”开始。</p>'}</div>${s.environment?.configured?'<button data-model-import>导入环境变量配置</button>':''}<p class="muted">API 费用由厂商收取；本地模型可选择无需密钥。密钥保存在本机服务端，页面不会回显。</p></section>`;
 }
 export function bindModelManager({api,reload,getState}){
  let dialog,sequence=0;

@@ -14,12 +14,13 @@ export const titles = {
 export const empty = s => `<div class="empty">${esc(s)}</div>`;
 export const kindLabel = k => ({official:'官方动态',media:'媒体资讯',x_person:'人物动态',mixed:'混合来源',account:'账号动态'}[k] || '媒体资讯');
 export const displayTitle = i => i.analysis?.status === 'completed' ? i.analysis.zhTitle : i.importedInterpretation?.zhTitle || i.title;
-const statusText = s => ({completed:'已完成',partial:'部分失败',failed:'失败',running:'运行中'}[s] || s || '未运行');
+const statusText = s => ({completed:'已完成',partial:'部分失败',failed:'失败',running:'运行中',budget_exhausted:'额度已用尽'}[s] || s || '未运行');
 export const badge = i => {
   if (i.demo) return '<span class="badge demo">演示数据</span>';
   if(i.acquisition?.eligibleForAnalysis===false)return '<span class="badge warning">材料不足或无效 · 不自动分析</span>';
   if (i.analysis?.status === 'completed') return `<span class="badge ${i.analysis.retained ? '' : 'warning'}">${i.analysis.retained ? 'AI 信号' : '已过滤'}</span>`;
   if (i.analysis?.status === 'failed') return '<span class="badge failed">分析失败</span>';
+  if (i.analysis?.status === 'uncertain') return '<span class="badge warning">结果待确认</span>';
   if (i.importedInterpretation) return '<span class="badge">导入解读</span>';
   return `<span class="badge warning">${i.analysis?.status === 'running' ? '分析中' : '待分析'}</span>`;
 };
@@ -46,7 +47,7 @@ export function cards(items) {
       <div class="actions">
         <button data-detail="${i.id}">查看解读与原文</button>
         <button data-save="${i.id}">${i.saved ? '已收藏' : '＋ 稍后阅读'}</button>
-        ${!i.demo&&i.acquisition?.eligibleForAnalysis!==false ? `<button data-analyze="${i.id}">${a ? '重新分析' : 'AI 分析'}</button>` : ''}
+        ${!i.demo&&i.acquisition?.eligibleForAnalysis!==false ? `<button data-analyze="${i.id}">${a ? '重新分析' : '分析此条'}</button>` : ''}
         <a href="${esc(i.openUrl||i.url)}" target="_blank" rel="noopener noreferrer">原文 ↗</a>
         <small>${i.read ? '已读' : '未读'}</small>
       </div>
@@ -141,7 +142,7 @@ export function settings(sources, model, runs = [], extra = {}) {
   const batchDisabled = batch.filter(s => s.enabled === false);
   const imports = sources.filter(s => s.id === 'ai-information');
   const typeLabel = {rss:'RSS/Atom', json:'统一 JSON', 'public-feed':'公开 Feed', news:'新闻正文采集', x:'X人物动态', bilibili:'B站账号动态', xiaohongshu:'小红书笔记', demo:'演示'};
-  return `${modelPanel(extra.models)}${operationsSettings(extra,esc)}<section class="panel" style="margin-top:18px"><div class="panel-head"><h2>内置真实新闻来源</h2><button id="install-presets" class="primary">添加官方与媒体来源</button></div><p class="muted">OpenAI 官方 RSS、Anthropic 官方新闻、量子位。每个来源默认采集最新3篇；优先获取正文，失败时保留错误，订阅摘要可用时明确标记。重复 URL 不再抓取正文，不改动已有来源开关。</p></section><div style="margin-top:18px">
+  return `${modelPanel(extra.models,extra.scheduler)}${operationsSettings(extra,esc)}<section class="panel" style="margin-top:18px"><div class="panel-head"><h2>内置信息来源</h2><button id="install-presets" class="primary">添加内置来源</button></div><p class="muted">包含 OpenAI、Anthropic、量子位，以及 B 站和小红书账号。新增社交账号默认停用，连接平台后可在「关注账号」启用。</p></section><div style="margin-top:18px">
     <section class="panel">
       <div class="panel-head"><h2>新增 AI 信息来源</h2></div>
       <form id="add" class="form-grid">
@@ -190,7 +191,7 @@ export function monitor(runs) {
     ${runs.map(r => {
       const results = r.results || [];
       const skipped = r.skipped || [];
-      const kind = r.kind === 'analysis' ? 'AI 信号分析' : r.kind === 'import' ? '公开数据导入' : r.kind === 'collect' ? '多源采集' : r.kind;
+      const kind = r.kind === 'analysis' ? (r.mode==='parallel'?'并行分析':'逐条分析') : r.kind === 'import' ? '公开数据导入' : r.kind === 'collect' ? '多源采集' : r.kind;
       return `<article class="card">
         <div class="meta"><span>${kind} · ${esc(r.startedAt)}</span><span class="badge ${['failed', 'partial'].includes(r.status) ? 'failed' : ''}">${esc(statusText(r.status))}</span></div>
         <p>${r.kind === 'analysis' ? `进度 ${r.progress || 0} / ${r.total || 0}` : `来源 ${results.length} 个${skipped.length ? ` · 跳过 ${skipped.length} 个停用来源` : ''}`}</p>

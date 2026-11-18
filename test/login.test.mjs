@@ -12,12 +12,18 @@ test('登录检测允许登录、退出、切换，成功及暂时检测失败�
 });
 test('三个平台保持登录窗口和采集锁，完成登录后释放；重复完成安全',async()=>{
  const launch=chromium.launchPersistentContext,contexts=[];
- chromium.launchPersistentContext=async()=>{const context=new EventEmitter();context.closed=false;context.pages=()=>[{goto:async()=>{},evaluate:async()=>true}];context.close=async()=>{context.closed=true;context.emit('close');};contexts.push(context);return context;};
+ let biliVerification='';
+ chromium.launchPersistentContext=async()=>{const context=new EventEmitter();context.closed=false;context.pages=()=>[{goto:async()=>{},evaluate:async()=>true,frames:()=>[{locator:()=>({innerText:async()=>biliVerification})}]}];context.close=async()=>{context.closed=true;context.emit('close');};contexts.push(context);return context;};
  try{
   await Promise.all([openPlatformLogin('bilibili'),openPlatformLogin('xiaohongshu'),openXLogin()]);
   await new Promise(r=>setTimeout(r,2700));
   assert.ok(contexts.every(c=>!c.closed));assert.equal(platformStatus('bilibili').status,'ready');assert.equal(platformStatus('xiaohongshu').status,'ready');assert.equal(xStatus().status,'ready');
   await assert.rejects(withPlatformPage('bilibili',()=>{}),e=>e.status===409);await assert.rejects(collectX({}),e=>e.status===409);
+  biliVerification='极验封禁\nError code: 60500';
+  await new Promise(r=>setTimeout(r,2500));
+  assert.equal(platformStatus('bilibili').status,'verification_blocked');
+  assert.equal(platformStatus('bilibili').busy,true);
   await Promise.all([finishPlatformLogin('bilibili'),finishPlatformLogin('xiaohongshu'),finishXLogin()]);assert.ok(contexts.every(c=>c.closed));assert.equal(platformStatus('bilibili').busy,false);assert.equal(xStatus().busy,false);await finishXLogin();await finishPlatformLogin('bilibili');
+  assert.equal(platformStatus('bilibili').status,'verification_blocked');
  }finally{await Promise.all(contexts.filter(c=>!c.closed).map(c=>c.close()));chromium.launchPersistentContext=launch;}
 });

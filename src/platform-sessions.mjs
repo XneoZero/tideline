@@ -5,6 +5,37 @@ import {fileURLToPath} from 'node:url';
 import {serviceError} from './errors.mjs';
 const configs={bilibili:{home:'https://www.bilibili.com/',name:'Bilibili'},xiaohongshu:{home:'https://www.xiaohongshu.com/explore',name:'小红书'}};
 const locks=new Set(),contexts=new Map(),states=new Map();
+const verificationBlocked={
+ status:'verification_blocked',
+ message:'哔哩哔哩登录验证受限（极验 60500）。请关闭登录窗口，间隔约 30 分钟后再手动尝试。'
+};
+const isGeeTestBlocked=text=>/极验封禁|(?:Error code|错误码)\s*[:：]?\s*60500\b/i.test(text);
+
+async function checkPlatformLogin(page,id){
+ if(id==='bilibili'){
+  for(const frame of page.frames()){
+   const text=await frame.locator('body').innerText({timeout:500}).catch(()=>'');
+   if(isGeeTestBlocked(text))return 'verification_blocked';
+  }
+ }
+ return await loggedIn(page,id)?'ready':'awaiting_login';
+}
+
+function updateLoginStatus(id,status){
+ const message=status==='ready'
+  ?'已检测到登录，窗口保持打开；可退出旧账号并切换，完成后请关闭窗口或点击“完成登录”'
+  :'请在窗口中登录或切换账号，完成后关闭窗口或点击“完成登录”';
+ states.set(id,{...(status==='verification_blocked'?verificationBlocked:{status,message}),checkedAt:new Date().toISOString()});
+}
+
+function closeLoginStatus(id){
+ contexts.delete(id);
+ locks.delete(id);
+ const status=states.get(id)?.status;
+ if(status==='verification_blocked')return;
+ const ready=status==='ready';
+ states.set(id,{status:ready?'ready':'closed',message:ready?'登录窗口已关闭，后续采集将使用当前保存的账号':'登录窗口已关闭，可重新连接或切换账号',checkedAt:new Date().toISOString()});
+}
 export const platformStatus=id=>({...states.get(id)||{status:'not_checked',message:'尚未连接，可尝试公开采集；需要登录时请手动连接'},busy:locks.has(id),profileIsIsolated:true});
 async function launch(id,headless){const directory=fileURLToPath(new URL('../data/'+id+'-edge-profile',import.meta.url));mkdirSync(directory,{recursive:true});return chromium.launchPersistentContext(directory,{channel:process.platform==='win32'?'msedge':'chrome',headless,locale:'zh-CN',viewport:{width:1280,height:900}});}
 async function loggedIn(page,id){
@@ -14,7 +45,7 @@ async function loggedIn(page,id){
 export async function openPlatformLogin(id){
  if(!configs[id])throw serviceError('未知平台');if(locks.has(id))throw serviceError('平台浏览器正在使用中',409);locks.add(id);let context;
  try{context=await launch(id,false);contexts.set(id,context);const page=context.pages()[0]||await context.newPage();await page.goto(configs[id].home,{waitUntil:'domcontentloaded',timeout:45000});states.set(id,{status:'awaiting_login',message:'请在独立 Edge 窗口登录或退出旧账号后切换；完成后关闭窗口或点击“完成登录”'});
-  monitorLogin(context,{check:()=>loggedIn(page,id),onStatus:ready=>states.set(id,{status:ready?'ready':'awaiting_login',message:ready?'已检测到登录，窗口保持打开；可退出旧账号并切换，完成后请关闭窗口或点击“完成登录”':'请在窗口中登录或切换账号，完成后关闭窗口或点击“完成登录”',checkedAt:new Date().toISOString()}),onClose:()=>{contexts.delete(id);locks.delete(id);const ready=states.get(id)?.status==='ready';states.set(id,{status:ready?'ready':'closed',message:ready?'登录窗口已关闭，后续采集将使用当前保存的账号':'登录窗口已关闭，可重新连接或切换账号',checkedAt:new Date().toISOString()});}});return platformStatus(id);
+  monitorLogin(context,{check:()=>checkPlatformLogin(page,id),onStatus:status=>updateLoginStatus(id,status),onClose:()=>closeLoginStatus(id)});return platformStatus(id);
  }catch(e){await context?.close().catch(()=>{});contexts.delete(id);locks.delete(id);states.set(id,{status:'connection_error',message:e.message.split('\n')[0]});throw serviceError('打开平台登录页失败：'+e.message.split('\n')[0],503);}
 }
 export async function withPlatformPage(id,action){

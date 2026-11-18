@@ -8,7 +8,10 @@ export function createScheduler(store,{collection,analysis,now=Date.now}={}){
   const config=get();for(const key of Object.keys(patch))if(!['enabled','intervalMinutes','analysisLimit','dailyCallLimit'].includes(key))throw new Error('未知调度字段');
   if(patch.enabled!==undefined&&typeof patch.enabled!=='boolean')throw new Error('enabled 必须为布尔值');
   for(const [key,min,max] of [['intervalMinutes',15,1440],['analysisLimit',0,20],['dailyCallLimit',0,100]])if(patch[key]!==undefined&&(!Number.isInteger(patch[key])||patch[key]<min||patch[key]>max))throw new Error(`${key} 必须为${min}到${max}的整数`);
-  Object.assign(config,patch);config.nextRunAt=config.enabled?new Date(now()+config.intervalMinutes*60000).toISOString():null;return save(config);
+  const timingChanged=['enabled','intervalMinutes'].some(key=>patch[key]!==undefined&&patch[key]!==config[key]);
+  Object.assign(config,patch);
+  if(timingChanged)config.nextRunAt=config.enabled?new Date(now()+config.intervalMinutes*60000).toISOString():null;
+  return save(config);
  }
  function recover(){
   for(const run of store.runs().filter(r=>r.status==='running')){run.status='interrupted';run.finishedAt=new Date(now()).toISOString();run.error='服务重启时发现未完成任务';store.saveRun(run);}
