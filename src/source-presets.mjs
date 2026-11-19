@@ -1,5 +1,6 @@
 import {normalizeAccount} from './accounts.mjs';
 import {builtInSources} from './news-sources.mjs';
+import {deepseekDocsSource} from './deepseek-docs.mjs';
 
 const bilibili = [
  ['3747571004608077','DeepSeek Harness',''],
@@ -16,6 +17,7 @@ const xiaohongshu = [
 
 export const sourcePresets = [
  ...builtInSources,
+ deepseekDocsSource,
  ...bilibili.map(([url,name,manufacturer])=>normalizeAccount({platform:'bilibili',url,name,manufacturer})),
  ...xiaohongshu.map(([uid,name,manufacturer])=>normalizeAccount({
   platform:'xiaohongshu',url:'https://www.xiaohongshu.com/user/profile/'+uid,name,manufacturer

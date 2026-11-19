@@ -35,14 +35,20 @@ export function createStore(path = ':memory:') {
     runs: () => db.prepare('SELECT body FROM runs ORDER BY rowid DESC LIMIT 30').all().map(r=>JSON.parse(r.body)),
     saveRun: r => db.prepare('INSERT OR REPLACE INTO runs VALUES (?,?)').run(r.id,JSON.stringify(r)),
     patch(id, changes) { const item=all().find(i=>i.id===id); if (!item) return null; Object.assign(item,changes); db.prepare('UPDATE items SET body=? WHERE id=?').run(JSON.stringify(item),id); return item; },
-    ingest(rows, source, runId) {
+    ingest(rows, source, runId, checkpoint) {
       let added=0, duplicates=0;
       db.exec('BEGIN');
-      try { for(const row of rows) {
+      try {
+      if(checkpoint){
+        const current=db.prepare('SELECT body FROM state WHERE key=?').get(checkpoint.key);
+        if((current?.body??'null')!==JSON.stringify(checkpoint.previous))throw new Error('文档快照已被其他采集更新，请重试');
+      }
+      for(const row of rows) {
         if(typeof row.title!=='string'||!row.title.trim()||row.title.length>1000) throw new Error('标题不能为空且不超过 1000 字');
         const url=canonical(row.url), text=String(row.content||row.summary||'').slice(0,20000);
         const publishedAt=row.publishedAt ? new Date(row.publishedAt).toISOString() : null;
-        const fingerprint=hash(url);
+        const revision=source.type==='deepseek-docs'?row.acquisition?.documentRevision:null;
+        const fingerprint=hash(revision?JSON.stringify([source.id,url,revision]):url);
         const openUrl=row.openUrl?new URL(row.openUrl).href:url;canonical(openUrl);
         if(db.prepare('SELECT id FROM items WHERE fingerprint=?').get(fingerprint)){duplicates++;continue;}
         if(row.tags!==undefined&&!Array.isArray(row.tags))throw new Error('tags 必须是数组');
@@ -51,9 +57,11 @@ export function createStore(path = ':memory:') {
           platform:['x','bilibili','xiaohongshu'].includes(source.type)?source.type:null,accountId:source.accountId||source.handle||null,manufacturer:source.manufacturer||'',accountIdentity:source.identityStatus||'unverified',openUrl,
           acquisition:row.acquisition||null,authorName:String(row.authorName||source.authorName||'').slice(0,160),authorHandle:String(row.authorHandle||source.handle||'').slice(0,160),sourceKind:row.sourceKind||source.kind||'media',originalSourceName:row.originalSourceName||source.name,importedInterpretation:row.importedInterpretation||null,analysis:{status:'pending'},
           score:Math.min(100,40+tags.length*8+(/AI|模型|智能体|芯片|发布/i.test(row.title)?20:0)),scoreReason:'规则评分：基础 40 + 每标签 8 + 关键字 20；非事实可信度',
-          evidence:{runId,sourceUrl:source.url||url,contentHash:hash(text),kind:source.type==='demo'?'fixture':'observed',limitations:['原始摘要为正文截取；模型解读另见 analysis，导入解读另见 importedInterpretation','仅按规范化 URL 去重，未启用语义去重']}};
+          evidence:{runId,sourceUrl:revision?url:source.url||url,contentHash:hash(text),kind:source.type==='demo'?'fixture':'observed',limitations:revision?['材料为官方文档正文的变更摘录，时间为采集发现时间']:['原始摘要为正文截取；模型解读另见 analysis，导入解读另见 importedInterpretation','仅按规范化 URL 去重，未启用语义去重']}};
         db.prepare('INSERT INTO items VALUES (?,?,?)').run(item.id,fingerprint,JSON.stringify(item)); added++;
-      } db.exec('COMMIT'); } catch(e){db.exec('ROLLBACK');throw e;}
+      }
+      if(checkpoint)db.prepare('INSERT OR REPLACE INTO state VALUES (?,?)').run(checkpoint.key,JSON.stringify(checkpoint.value));
+      db.exec('COMMIT'); } catch(e){db.exec('ROLLBACK');throw e;}
       return {added,duplicates};
     }
   };

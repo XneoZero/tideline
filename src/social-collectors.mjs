@@ -38,13 +38,16 @@ export function parseBilibiliFeed(payload,source,{now=Date.now()}={}){
  if(!rows.length&&payload.data.items.length&&warnings.some(w=>!/跳过置顶|超出关注时间范围/.test(w.error)))throw new Error('Bilibili动态无法验证：'+warnings.map(w=>w.error).join('；'));
  const result=rows.sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt)).slice(0,source.limit||3);result.warnings=warnings;return result;
 }
-export async function collectSocial(input,{seen=()=>false}={}){
+export async function collectSocial(input,{seen=()=>false,request=fetch,withPage=withPlatformPage}={}){
  const source={...input,...normalizeAccount({...input,platform:input.type})};
  let publicApiWarning=null;
  if(source.type==='bilibili'){
-  try{const response=await fetch('https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid='+source.accountId,{signal:AbortSignal.timeout(12000),headers:{'Referer':source.url,'User-Agent':'Mozilla/5.0'}});if(response.ok){return parseBilibiliFeed(await response.json(),source);}publicApiWarning={reason:'public_api_unavailable',error:'HTTP '+response.status};}catch(e){publicApiWarning={reason:'public_api_unavailable',error:e.message.split('\n')[0]};}
+  try{const response=await request('https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid='+source.accountId,{signal:AbortSignal.timeout(12000),headers:{'Referer':source.url,'User-Agent':'Mozilla/5.0'}});if(response.ok){return parseBilibiliFeed(await response.json(),source);}publicApiWarning={reason:'public_api_unavailable',error:'HTTP '+response.status};}catch(e){publicApiWarning={reason:'public_api_unavailable',error:e.message.split('\n')[0]};}
  }
- return withPlatformPage(source.type,async page=>{
+ const attempts=source.type==='bilibili'?2:1;
+ for(let attempt=0;attempt<attempts;attempt++){
+ try{
+ const result=await withPage(source.type,async page=>{
   const browserFeed=source.type==='bilibili'?page.waitForResponse(response=>{
    const url=new URL(response.url());
    return url.origin==='https://api.bilibili.com'
@@ -90,6 +93,19 @@ export async function collectSocial(input,{seen=()=>false}={}){
    }catch(e){warnings.push({error:e.message});}
   }
   if(!rows.length&&warnings.some(w=>!/跳过置顶|超出关注时间范围/.test(w.error)))throw new Error('没有可验证的账号正文：'+warnings.map(w=>w.error).join('；'));
-  rows.warnings=[...(publicApiWarning?[publicApiWarning]:[]),...warnings];return rows;
+  rows.warnings=warnings;return rows;
  });
+ result.warnings=[...(publicApiWarning?[publicApiWarning]:[]),...(result.warnings||[])];
+ return result;
+ }catch(error){
+  // Retry transient browser transport failures in a fresh context, never login or verification errors.
+  const transient=error.name==='TimeoutError'||/Timeout \d+ms exceeded|net::ERR_(?:CONNECTION_RESET|CONNECTION_CLOSED|TIMED_OUT|NETWORK_CHANGED)/.test(error.message);
+  if(attempt+1<attempts&&transient)continue;
+  if(source.type==='bilibili'&&publicApiWarning){
+   const detail=error.message.split('\n')[0];
+   error.message=`B站采集失败：${publicApiWarning.reason==='public_api_unavailable'?'公开接口':'浏览器动态接口'} ${publicApiWarning.error}；浏览器${attempt?'重试后仍失败':'读取失败'}：${detail}`;
+  }
+  throw error;
+ }
+ }
 }

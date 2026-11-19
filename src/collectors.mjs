@@ -1,6 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { normalizePublicFeed } from './ai-information.mjs';
 import {collectNews} from './news-sources.mjs';
+import {collectDeepSeekDocs} from './deepseek-docs.mjs';
 import {fetchText} from './http.mjs';
 import {collectX} from './x-collector.mjs';
 import {collectSocial} from './social-collectors.mjs';
@@ -23,6 +24,7 @@ export async function collect(source,options={}) {
  if(source.type==='x')return collectX(source);
  if(['bilibili','xiaohongshu'].includes(source.type))return collectSocial(source,options);
  if(source.type==='news')return collectNews(source,{parseFeed,...options});
+ if(source.type==='deepseek-docs')return collectDeepSeekDocs(source,options);
  const u=new URL(source.url); if(!['http:','https:'].includes(u.protocol)) throw new Error('仅支持 HTTP(S)');
  const text=await fetchText(u);
  if(source.type==='rss')return parseFeed(text);

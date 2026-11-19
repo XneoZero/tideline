@@ -11,7 +11,7 @@ test('热切换保留本批配置，下一批使用新模型，关闭后不再�
  const store=createStore(),registry=createModelRegistry(store,{env:{}}),seen=[];
  try{const first=registry.save(draft),second=registry.save({...draft,model:'second'});registry.activate(first.id);store.ingest([1,2].map(n=>({title:'fixture '+n,content:'text',url:'https://example.com/'+n})),{id:'raw',name:'fixture',type:'json'},'r');
  const service=createAnalysisService(store,{registry,analyze:async(item,{config})=>{seen.push(config.model);registry.activate(second.id);return {status:'completed',retained:false};}});
- await service.run({limit:2});assert.deepEqual(seen,['fixture-chat','fixture-chat']);await service.run({limit:1,retry:true});assert.equal(seen[2],'second');registry.activate('none');await assert.rejects(service.run(),/添加并选择/);
+ await service.run({mode:'sequential',limit:2});assert.deepEqual(seen,['fixture-chat','fixture-chat']);await service.run({mode:'sequential',limit:1,retry:true});assert.equal(seen[2],'second');registry.activate('none');await assert.rejects(service.run(),/添加并选择/);
  }finally{store.db.close();}
 });
 test('模型连接加密保存、隐藏密钥、保留空白编辑和域名更换保护',()=>{
