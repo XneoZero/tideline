@@ -23,11 +23,20 @@ export function createScheduler(store,{collection,analysis,now=Date.now}={}){
   try{
    if(!job.collectionDone){
     const results=[];const ids=job.failedSourceIds?.length?job.failedSourceIds:['all'];
-    for(const id of ids){const result=await collection.run(id);results.push(...result.results);}
+    job.collectionRunIds??=[];
+    for(const id of ids){
+     const result=await collection.run(id);results.push(...result.results);
+     if(result.id)job.collectionRunIds.push(result.id);
+     store.saveJob(job);
+    }
     job.failedSourceIds=results.filter(r=>r.status==='failed').map(r=>r.sourceId);job.collectionDone=!job.failedSourceIds.length;job.collectionResults=results;store.saveJob(job);
     if(!job.collectionDone)throw new Error('部分来源采集失败：'+results.filter(r=>r.status==='failed').map(r=>r.error).join('；'));
    }
-   if(!job.analysisDone&&config.analysisLimit>0){const result=await analysis.run({limit:config.analysisLimit});job.analysisRunId=result.id;job.analysisDone=!['failed','partial'].includes(result.status);store.saveJob(job);if(!job.analysisDone)throw new Error('部分模型分析失败，等待有限重试');}
+   if(!job.analysisDone&&config.analysisLimit>0){
+    const result=await analysis.run({mode:'parallel',limit:config.analysisLimit,collectionRunIds:job.collectionRunIds,retry:Boolean(job.analysisRunId)});
+    job.analysisRunId=result.id;job.analysisDone=!['failed','partial'].includes(result.status);
+    store.saveJob(job);if(!job.analysisDone)throw new Error('部分模型分析失败，等待有限重试');
+   }
    const brief=buildDailyBrief(store,localDay(now()));job.briefDay=brief.day;job.status='completed';job.finishedAt=new Date(now()).toISOString();job.error=null;
   }catch(e){job.error=e.message;job.status=job.attempts>=3?'failed':'retry';job.nextAttemptAt=new Date(now()+Math.min(30,2**job.attempts)*60000).toISOString();}
   store.saveJob(job);return job;

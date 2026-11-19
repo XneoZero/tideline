@@ -1,6 +1,7 @@
 import {modelPanel} from './model-manager.js';
 import {operationsSettings} from './operations.js';
 import {scopeLabel} from './labels.js';
+import {beijingTime,runError,safeLogUrl} from './run-display.js';
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const titles = {
   dashboard: ['AI 信息工作台', '采集、筛选、分析与阅读，一眼掌握你的 AI 信息流。'],
@@ -130,7 +131,7 @@ function sourceOutcome(source, runs) {
   if (source.id === 'ai-information') return last ? `最近导入：新增 ${last.added || 0} 条，去重 ${last.duplicates || 0} 条` : '尚未导入公开数据';
   if (source.enabled === false) return last ? `已停用 · 上次采集：${last.status === 'ok' ? '成功' : '失败'} · 新增 ${last.added || 0}` : '已停用 · 批量采集会跳过';
   if (!last) return '尚未采集';
-  return `上次采集：${last.status === 'ok' ? '成功' : '失败'} · 新增 ${last.added || 0} · 去重 ${last.duplicates || 0}${last.error ? ` · ${last.error}` : ''}`;
+  return `上次采集：${last.status === 'ok' ? '成功' : '失败'} · 新增 ${last.added || 0} · 去重 ${last.duplicates || 0}${last.error ? ` · ${runError(last.error)}` : ''}`;
 }
 
 export function settings(sources, model, runs = [], extra = {}) {
@@ -141,8 +142,8 @@ export function settings(sources, model, runs = [], extra = {}) {
   const batchEnabled = batch.filter(s => s.enabled !== false);
   const batchDisabled = batch.filter(s => s.enabled === false);
   const imports = sources.filter(s => s.id === 'ai-information');
-  const typeLabel = {rss:'RSS/Atom', json:'统一 JSON', 'public-feed':'公开 Feed', news:'新闻正文采集', x:'X人物动态', bilibili:'B站账号动态', xiaohongshu:'小红书笔记', demo:'演示'};
-  return `${modelPanel(extra.models,extra.scheduler)}${operationsSettings(extra,esc)}<section class="panel" style="margin-top:18px"><div class="panel-head"><h2>内置信息来源</h2><button id="install-presets" class="primary">添加内置来源</button></div><p class="muted">包含 OpenAI、Anthropic、量子位，以及 B 站和小红书账号。新增社交账号默认停用，连接平台后可在「关注账号」启用。</p></section><div style="margin-top:18px">
+  const typeLabel = {rss:'RSS/Atom', json:'统一 JSON', 'public-feed':'公开 Feed', news:'新闻正文采集', 'deepseek-docs':'文档增量监测', x:'X人物动态', bilibili:'B站账号动态', xiaohongshu:'小红书笔记', demo:'演示'};
+  return `${modelPanel(extra.models,extra.scheduler)}${operationsSettings(extra,esc,sources)}<section class="panel" style="margin-top:18px"><div class="panel-head"><h2>内置信息来源</h2><button id="install-presets" class="primary">添加内置来源</button></div><p class="muted">包含 DeepSeek 官方 API 文档、OpenAI、Anthropic、量子位，以及 B 站和小红书账号。新增社交账号默认停用，连接平台后可在「关注账号」启用。</p></section><div style="margin-top:18px">
     <section class="panel">
       <div class="panel-head"><h2>新增 AI 信息来源</h2></div>
       <form id="add" class="form-grid">
@@ -191,12 +192,17 @@ export function monitor(runs) {
     ${runs.map(r => {
       const results = r.results || [];
       const skipped = r.skipped || [];
-      const kind = r.kind === 'analysis' ? (r.mode==='parallel'?'并行分析':'逐条分析') : r.kind === 'import' ? '公开数据导入' : r.kind === 'collect' ? '多源采集' : r.kind;
+      const kind = r.kind === 'analysis' ? (r.mode==='parallel'?'批量分析':'逐条分析') : r.kind === 'import' ? '公开数据导入' : r.kind === 'collect' ? '多源采集' : r.kind;
       return `<article class="card">
-        <div class="meta"><span>${kind} · ${esc(r.startedAt)}</span><span class="badge ${['failed', 'partial'].includes(r.status) ? 'failed' : ''}">${esc(statusText(r.status))}</span></div>
+        <div class="meta"><span>${kind} · ${esc(beijingTime(r.startedAt))}</span><span class="badge ${['failed', 'partial'].includes(r.status) ? 'failed' : ''}">${esc(statusText(r.status))}</span></div>
         <p>${r.kind === 'analysis' ? `进度 ${r.progress || 0} / ${r.total || 0}` : `来源 ${results.length} 个${skipped.length ? ` · 跳过 ${skipped.length} 个停用来源` : ''}`}</p>
         ${skipped.length ? `<p class="skip-list">已跳过：${skipped.map(s => esc(s.name)).join('、')}</p>` : ''}
-        <details><summary>查看步骤、跳过来源与错误</summary><pre>${esc(JSON.stringify({results, skipped}, null, 2))}</pre></details>
+        <details><summary>查看步骤、跳过来源与错误</summary>${r.finishedAt ? `<p>结束时间：${esc(beijingTime(r.finishedAt))}</p>` : ''}<pre>${esc(JSON.stringify({results, skipped}, (key,value) => {
+          if (typeof value !== 'string') return value;
+          if (key === 'error') return runError(value);
+          if (key === 'url') return safeLogUrl(value);
+          return value;
+        }, 2))}</pre></details>
       </article>`;
     }).join('') || empty('尚无运行记录。')}
   </section>`;

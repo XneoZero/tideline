@@ -11,7 +11,9 @@ export function createAnalysisService(store,{analyze=analyzeItem,analyzeTogether
   if(active)throw serviceError('已有分析任务运行中',409);
   const config=registry.activeConfig();if(!configReady(config))throw serviceError('请先在设置中添加并选择分析模型',503);
   if(options.ids!==undefined&&(!Array.isArray(options.ids)||options.ids.length>20))throw serviceError('ids 最多20条');
-  const mode=options.mode??'sequential';
+  if(options.collectionRunIds!==undefined&&(!Array.isArray(options.collectionRunIds)||options.collectionRunIds.some(id=>typeof id!=='string')))throw serviceError('采集批次标识无效');
+  const collectionRunIds=options.collectionRunIds&&new Set(options.collectionRunIds);
+  const mode=options.mode??'parallel';
   if(mode!=='sequential'&&mode!=='parallel')throw serviceError('未知分析模式');
   const parallel=mode==='parallel';
   if(options.limit!==undefined&&(!Number.isInteger(options.limit)||options.limit<1||options.limit>20))throw serviceError('limit 必须为1到20的整数');
@@ -19,8 +21,9 @@ export function createAnalysisService(store,{analyze=analyzeItem,analyzeTogether
    if(item.demo||item.acquisition?.eligibleForAnalysis===false)return false;
    if(options.ids&&!options.ids.includes(item.id))return false;
    if(options.sourceId&&item.sourceId!==options.sourceId)return false;
+   if(collectionRunIds&&!collectionRunIds.has(item.evidence?.runId))return false;
    const status=item.analysis?.status;
-   if(parallel)return !status||status==='pending';
+   if(parallel)return !status||status==='pending'||(options.retry===true&&status==='failed');
    return options.retry===true||!['completed','running','uncertain'].includes(status);
   }).sort((a,b)=>(Date.parse(b.publishedAt)||0)-(Date.parse(a.publishedAt)||0));
   const queue=candidates.slice(0,options.limit??maxAnalysisBatch);

@@ -27,7 +27,7 @@ export function createApp(store) {
  app.use(express.json({limit:'2mb'}));
  registerModelRoutes(app,store,registry);
  app.use('/api/v1/whale',(req,res,next)=>{const token=process.env.FEED_API_TOKEN;if(!token)return res.status(503).json({error:'请配置 FEED_API_TOKEN 后启用 Whale 接口'});if(req.headers.authorization!==`Bearer ${token}`)return res.status(401).json({error:'令牌无效'});next();});
- app.get('/api/v1/health',(_,res)=>res.json({status:'ok',application:'tideline-information-feeding',version:'0.7.0'}));
+ app.get('/api/v1/health',(_,res)=>res.json({status:'ok',application:'tideline-information-feeding',version:'0.8.0'}));
  registerAstrBotRoutes(app,store);
  registerAccountRoutes(app,store);
  app.get('/api/v1/source-presets',(_,res)=>res.json(sourcePresets));
@@ -45,7 +45,12 @@ export function createApp(store) {
   if(!source)return res.status(404).json({error:'来源不存在'});
   res.json(source);
  });
- app.post('/api/v1/collect',async(req,res,next)=>{try{res.json(await collection.run(req.body.sourceId));}catch(e){next(e);}});
+ app.get('/api/v1/collect/status',(_,res)=>res.set('Cache-Control','no-store').json({active:collection.active}));
+ app.post('/api/v1/collect',async(req,res,next)=>{try{
+  const {sourceId,requestId}=req.body;
+  if(requestId!==undefined&&(typeof requestId!=='string'||!/^[a-zA-Z0-9-]{1,64}$/.test(requestId)))return res.status(400).json({error:'采集请求标识无效'});
+  res.json(await collection.run(sourceId,requestId));
+ }catch(e){next(e);}});
  app.get('/api/v1/scheduler',(_,res)=>res.json(scheduler.status()));
  app.post('/api/v1/scheduler/run',(_,res)=>{const job=scheduler.enqueue();res.status(202).json(job);scheduler.tick().catch(e=>store.setState('schedulerError',e.message));});
  app.patch('/api/v1/scheduler',(req,res)=>res.json(scheduler.configure(req.body)));
@@ -66,5 +71,5 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
  mkdirSync(new URL('../data',import.meta.url),{recursive:true});const store=createStore(fileURLToPath(new URL('../data/feed.db',import.meta.url)));
  if(!store.sources().some(s=>s.id==='demo'))store.saveSource({id:'demo',name:'演示信号 · 非真实新闻',type:'demo'});
  const app=createApp(store);app.locals.scheduler.start();
- app.listen(Number(process.env.PORT||4317),'127.0.0.1',()=>console.log('信息流工作台 http://127.0.0.1:4317'));
+ const listener=app.listen(Number(process.env.PORT||4317),'127.0.0.1',()=>console.log('信息流工作台 http://127.0.0.1:'+listener.address().port));
 }

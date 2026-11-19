@@ -1,3 +1,87 @@
-const {chromium}=require('playwright');
-const assert=require('node:assert/strict');
-(async()=>{const {createApp}=await import('../src/server.mjs');const {createStore}=await import('../src/core.mjs');const express=(await import('express')).default;const store=createStore();const upstream=express().get('/',(_,r)=>r.json([{title:'QA source article',content:'QA fixture content',url:'https://example.com/qa-pipeline'}])).listen(0,'127.0.0.1');await new Promise(r=>upstream.once('listening',r));store.saveSource({id:'test',name:'QA fixture',type:'json',url:`http://127.0.0.1:${upstream.address().port}/`});const server=createApp(store).listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const browser=await chromium.launch({channel:'msedge',headless:true});try{const page=await browser.newPage();let modelCalls=0;await page.route('**/api/v1/analysis/status',route=>route.fulfill({json:{configured:true,model:'QA-mock',active:null}}));await page.route('**/api/v1/analysis/run',async route=>{modelCalls++;const body=route.request().postDataJSON();if(body.mode==='parallel'){assert.deepEqual(body,{mode:'parallel'});return route.fulfill({json:{status:'completed',total:1,progress:1,deferred:1,results:[{status:'ok'}]}});}assert.equal(body.ids.length,1);const item=store.all().find(i=>i.id===body.ids[0]);assert.ok(item&&!item.demo);store.patch(item.id,{analysis:{status:'completed',retained:true,zhTitle:'测试中文解读',zhSummary:'QA fixture',tags:['QA'],importanceScore:50,whyItMatters:'QA test'}});await route.fulfill({json:{status:'completed',total:1,progress:1,results:[{itemId:item.id,status:'ok',retained:true}]}});});await page.goto(`http://127.0.0.1:${server.address().port}`);await page.waitForFunction(()=>document.querySelector('#source').options.length>1);await page.click('#pipeline');await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('分析结束'));assert.equal(modelCalls,1);await page.click('nav [data-view=signals]');await page.waitForSelector('.card');assert.ok((await page.textContent('#feed')).includes('测试中文解读'));await page.click('#pipeline');await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('没有待分析'));assert.equal(modelCalls,1);await page.selectOption('#source','test');await page.click('#analyze-parallel');await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('还有 1 条待分析'));assert.equal(modelCalls,2);console.log('One-click pipeline passed: real HTTP fixture collection, mocked model, persisted view, repeat skips model.');}finally{await browser.close();await new Promise(r=>server.close(r));await new Promise(r=>upstream.close(r));store.db.close();}})().catch(e=>{console.error(e);process.exit(1)});
+const assert = require('node:assert/strict');
+const {chromium} = require('playwright');
+
+const listen = async app => {
+ const server = app.listen(0, '127.0.0.1');
+ await new Promise(resolve => server.once('listening', resolve));
+ return server;
+};
+const url = server => 'http://127.0.0.1:'+server.address().port;
+
+(async () => {
+ const {createApp} = await import('../src/server.mjs');
+ const {createStore} = await import('../src/core.mjs');
+ const express = (await import('express')).default;
+ const store = createStore();
+ let releaseSource,releaseModel;
+ const sourceGate = new Promise(resolve => {releaseSource=resolve;});
+ const modelGate = new Promise(resolve => {releaseModel=resolve;});
+ const modelInputs = [];
+ let round=1;
+ const fixture = express().use(express.json());
+ fixture.get('/feeds/:id', async (req,res) => {
+  if(req.params.id==='second')await sourceGate;
+  const id=req.params.id+'-'+round;
+  res.json([{title:id,content:'QA content',url:'https://example.com/'+id}]);
+ });
+ fixture.post('/chat/completions', async (req,res) => {
+  const inputs=JSON.parse(req.body.messages.at(-1).content.split('\n材料：')[1]);
+  modelInputs.push(inputs.map(input=>input.title).sort());
+  await modelGate;
+  const results=inputs.map(({ref,title})=>({ref,isAiRelated:true,isUsefulSignal:true,zhTitle:'测试中文解读 '+title,
+   zhSummary:'QA fixture',signalType:'测试',whyItMatters:'用于验证批量处理',insightForMe:'按来源检查结果',
+   filterReason:'',importance:'medium',importanceScore:60,relevanceScore:80,signalScore:60,
+   noveltyScore:30,noiseScore:10,tags:['QA']}));
+  res.json({choices:[{message:{content:JSON.stringify({results})}}]});
+ });
+ const upstream = await listen(fixture);
+ for(const [id,name] of [['first','测试源一'],['second','测试源二']]){
+  store.saveSource({id,name,type:'json',url:url(upstream)+'/feeds/'+id});
+ }
+ store.ingest([{title:'旧待分析',url:'https://example.com/old'}],{id:'first',name:'测试源一',type:'json'},'old-run');
+ const server = await listen(createApp(store));
+ const browser = await chromium.launch({channel:'msedge',headless:true});
+ try{
+  const page=await browser.newPage();
+  const api=(path,data,method='POST')=>page.request.fetch(url(server)+'/api/v1/'+path,{method,data});
+  const model=await (await api('model-providers',{vendor:'custom',name:'QA',protocol:'openai',baseUrl:url(upstream),
+   model:'QA-model',requiresKey:false,jsonMode:true})).json();
+  assert.ok((await api('model-providers/active',{id:model.id},'PATCH')).ok());
+  await page.goto(url(server));
+  await page.waitForFunction(()=>document.querySelector('#source').options.length>1);
+  const workflow=page.locator('#workflow-progress');
+
+  await page.click('#pipeline');
+  await workflow.getByText('正在采集 测试源二',{exact:true}).waitFor();
+  assert.equal(await workflow.locator('progress').first().getAttribute('value'),'1');
+  assert.equal(await workflow.getByText('采集中',{exact:true}).count(),1);
+  releaseSource();
+  await workflow.getByText('正在等待模型批量返回').waitFor();
+  assert.equal(await workflow.locator('progress').first().getAttribute('value'),'2');
+  releaseModel();
+  await workflow.getByText(/批量分析结束，2 条完成/).waitFor();
+  assert.deepEqual(modelInputs,[['first-1','second-1']]);
+  assert.equal(store.all().find(i=>i.title==='旧待分析').analysis.status,'pending');
+  assert.equal(store.all().filter(i=>i.analysis.zhTitle?.startsWith('测试中文解读')).length,2);
+
+  await page.click('#pipeline');
+  await workflow.getByText(/没有待分析的新条目/).waitFor();
+  assert.equal(modelInputs.length,1);
+
+  round++;
+  await page.click('#refresh');
+  await workflow.getByText(/新增 2 条，去重 0 条/).waitFor();
+  assert.equal(modelInputs.length,1);
+
+  await page.click('#analyze-parallel');
+  await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('批量分析结束，3 条完成'));
+  assert.deepEqual(modelInputs[1],['first-2','second-2','旧待分析'].sort());
+  console.log('Live progress and one model request per batch verified.');
+ } finally {
+  releaseSource();releaseModel();
+  await browser.close();
+  await new Promise(resolve=>server.close(resolve));
+  await new Promise(resolve=>upstream.close(resolve));
+  store.db.close();
+ }
+})().catch(error=>{console.error(error);process.exit(1);});

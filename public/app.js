@@ -1,5 +1,7 @@
 import {bindModelManager} from './model-manager.js';
 import {scopeLabel} from './labels.js';
+import {runError} from './run-display.js';
+import {workflowProgress} from './workflow.js';
 import {accountPage} from './accounts.js';
 import {persistedBriefs} from './operations.js';
 import {esc,titles,cards,displayTitle,dashboard,settings,monitor} from './views.js';
@@ -11,7 +13,7 @@ function updateSourceControls(){
  const id=$('#source').value;const source=sources.find(s=>s.id===id);const disabled=Boolean(source&&source.enabled===false);
  $('#refresh').disabled=busy||disabled;
  if($('#pipeline'))$('#pipeline').disabled=busy||disabled||source?.type==='demo';
- for(const id of ['analyze','analyze-parallel'])$('#'+id).disabled=busy;
+ $('#analyze-parallel').disabled=busy;
  for(const button of document.querySelectorAll('[data-analyze]'))button.disabled=busy;
  const hint=$('#sourceHint');if(!hint)return;
  if(id==='all'){const managed=sources.filter(s=>s.id!=='ai-information'&&s.type!=='demo'),off=managed.filter(s=>s.enabled===false).length,on=managed.filter(s=>s.enabled!==false).length;if(!on){$('#refresh').disabled=true;hint.textContent=`当前没有已启用的真实来源${off?`（${off} 个停用）`:''}；请到系统设置启用，或单独选择演示。`;return;}hint.textContent=`批量采集只包含 ${on} 个已启用真实来源${off?`，将跳过 ${off} 个停用来源`:''}；演示源需单独选择。`;return;}
@@ -37,51 +39,78 @@ function render(){
 }
 async function load(){const version=++loadVersion;const data=await Promise.all([api('items'),api('sources'),api('runs'),api('analysis/status'),api('scheduler'),api('x/status'),api('briefs'),api('platforms'),api('model-providers')]);if(version!==loadVersion)return;[items,sources,runs,model,scheduler,x,briefs,platforms,modelSettings]=data;const selected=$('#source').value;$('#source').innerHTML='<option value="all">全部已启用真实来源</option>'+sources.filter(s=>s.id!=='ai-information').map(s=>`<option value="${s.id}">${esc(s.name)}${s.enabled===false?'（已停用）':''}</option>`).join('');$('#source').value=[...$('#source').options].some(o=>o.value===selected)?selected:'all';render();}
 async function action(fn){try{$('#status').textContent='';await fn();}catch(e){$('#status').textContent=e.message;}}
-const isPending=item=>!item.demo&&item.acquisition?.eligibleForAnalysis!==false&&(!item.analysis?.status||item.analysis.status==='pending');
+function summarizeAnalysis(run,label){
+ const done=run.results.filter(result=>result.status==='ok').length;
+ const failed=run.results.filter(result=>result.status==='failed').length;
+ const summary=run.total?label+'结束，'+done+' 条完成，'+failed+' 条失败。':'没有待分析的内容。';
+ const remaining=run.budgetExhausted
+  ?'今日模型调用额度已用尽，'+(run.total-run.progress+(run.deferred||0))+' 条留待后续。'
+  :run.deferred?'还有 '+run.deferred+' 条待分析，可再运行一批。':'';
+ const error=run.results.find(result=>result.error)?.error;
+ return summary+remaining+(error?' '+runError(error):'');
+}
 async function runAnalysis(options){
  if(busy)throw new Error('请等待当前操作完成');
  busy=true;updateSourceControls();
- const label=options.mode==='parallel'?'并行分析':'逐条分析';
+ const label=options.mode==='sequential'?'单条分析':'批量分析';
  $('#status').textContent=label+'中…';
- let running=true;
- const timer=setInterval(()=>api('analysis/status').then(status=>{
-  if(running&&status.active)$('#modelStatus').textContent=`${label}中 · ${status.active.progress}/${status.active.total}`;
- }).catch(()=>{}),1500);
  try{
   const run=await api('analysis/run',options);
   await load();
-  const done=run.results.filter(result=>result.status==='ok').length;
-  const failed=run.results.filter(result=>result.status==='failed').length;
-  const summary=run.total?`${label}结束，${done} 条完成，${failed} 条失败。`:'没有待分析的内容。';
-  const remaining=run.budgetExhausted
-   ?`今日模型调用额度已用尽，${run.total-run.progress+(run.deferred||0)} 条留待后续。`
-   :run.deferred?`还有 ${run.deferred} 条待分析，可再运行一批。`:'';
-  $('#status').textContent=summary+remaining;
- }finally{running=false;clearInterval(timer);busy=false;updateSourceControls();}
+  $('#status').textContent=summarizeAnalysis(run,label);
+ }finally{busy=false;updateSourceControls();}
 }
 async function collectSelected(withAnalysis=false){
- if(busy)throw new Error('请等待当前操作完成');if(withAnalysis&&!model.configured)throw new Error('请先配置模型，再使用采集并分析');
+ if(busy)throw new Error('请等待当前操作完成');
  busy=true;updateSourceControls();
- try{const r=await api('collect',{sourceId:$('#source').value});await load();const skipped=r.skipped?.length?`；跳过 ${r.skipped.length} 个停用来源`:'';const warnings=r.results.reduce((n,x)=>n+(x.warnings?.length||0),0);const summary=`采集${runStatus(r.status)}：新增 ${r.results.reduce((n,x)=>n+(x.added||0),0)} 条，去重 ${r.results.reduce((n,x)=>n+(x.duplicates||0),0)} 条${skipped}${warnings?`；${warnings} 条正文获取警告（见运行记录）`:''}。${r.results.filter(x=>x.error).map(x=>x.error).join('；')}`;$('#status').textContent=summary;
-  if(withAnalysis){const successful=r.results.filter(x=>x.status==='ok').map(x=>x.sourceId);const ids=items.filter(i=>successful.includes(i.sourceId)&&isPending(i)).sort((a,b)=>(Date.parse(b.publishedAt)||0)-(Date.parse(a.publishedAt)||0)).slice(0,3).map(i=>i.id);if(ids.length){busy=false;await runAnalysis({ids});$('#status').textContent=summary+' '+$('#status').textContent;}else $('#status').textContent=summary+' 没有待分析的新条目。';}
- }finally{busy=false;updateSourceControls();}
+ const requestId=crypto.randomUUID();
+ const sourceId=$('#source').value;
+ const panel=$('#workflow-progress');
+ let stage='collecting',collection,analysis,message='',lastView='',polling=false;
+ const show=()=>{
+  const html=workflowProgress({stage,withAnalysis,collection,analysis,message});
+  if(html===lastView)return;
+  lastView=html;panel.hidden=false;panel.innerHTML=html;
+ };
+ const poll=async()=>{
+  if(polling||stage!=='collecting')return;
+  polling=true;
+  try{
+   const {active}=await api('collect/status');
+   if(stage==='collecting'&&active?.requestId===requestId){collection=active;show();}
+  }catch{}finally{polling=false;}
+ };
+ show();
+ const timer=setInterval(poll,350);
+ try{
+  collection=await api('collect',{sourceId,requestId});
+  const added=collection.results.reduce((count,result)=>count+(result.added||0),0);
+  const duplicates=collection.results.reduce((count,result)=>count+(result.duplicates||0),0);
+  const warnings=collection.results.reduce((count,result)=>count+(result.warnings?.length||0),0);
+  message='采集'+runStatus(collection.status)+'，新增 '+added+' 条，去重 '+duplicates+' 条。';
+  if(warnings)message+=' 有 '+warnings+' 条采集警告，详见运行监控。';
+  stage='done';show();
+  if(withAnalysis&&added&&model.configured){
+   stage='analyzing';show();
+   analysis=await api('analysis/run',{mode:'parallel',collectionRunIds:[collection.id]});
+   message+=' '+summarizeAnalysis(analysis,'批量分析');
+  }else if(withAnalysis&&added){
+   message+=' 请先配置模型，再批量分析已采集内容。';
+  }else if(withAnalysis){
+   message+=' 没有待分析的新条目。';
+  }
+  stage='done';show();
+  await load();
+  $('#status').textContent=message;
+ }catch(error){
+  stage='failed';message+=(message?' ':'')+runError(error.message);show();
+  await load().catch(()=>{});
+  $('#status').textContent=message;
+ }finally{clearInterval(timer);busy=false;updateSourceControls();}
 }
 $('#refresh').onclick=()=>action(()=>collectSelected());
 $('#pipeline').onclick=()=>action(()=>collectSelected(true));
-$('#analyze').onclick=event=>{
- event.stopPropagation();
- action(()=>{
-  const sourceId=$('#source').value;
-  const next=items.filter(item=>isPending(item)&&(sourceId==='all'||item.sourceId===sourceId))
-   .sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt))[0];
-  if(!next){$('#status').textContent='没有待分析的内容。';return;}
-  return runAnalysis({ids:[next.id]});
- });
-};
-$('#analyze-parallel').onclick=event=>{
- event.stopPropagation();
- action(()=>runAnalysis({mode:'parallel'}));
-};
+$('#analyze-parallel').onclick=()=>action(()=>runAnalysis({mode:'parallel'}));
 $('#menu').onclick=()=>{const open=$('nav').classList.toggle('open');$('#menu').setAttribute('aria-expanded',String(open));};
 function navigate(next){view=next;location.hash=next;$('nav').classList.remove('open');$('#menu').setAttribute('aria-expanded','false');render();}
 addEventListener('hashchange',()=>{view=location.hash.slice(1);render();});
@@ -101,7 +130,7 @@ document.addEventListener('click',e=>action(async()=>{
  if(b.dataset.exportBrief){const brief=briefs.find(x=>x.day===b.dataset.exportBrief);if(!brief)return;const url=URL.createObjectURL(new Blob([brief.markdown],{type:'text/markdown;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='tideline-'+brief.day+'.md';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);return;}
  if(b.id==='install-presets'){const result=await api('source-presets/install',{});await load();$('#status').textContent=`新增 ${result.added.length} 个内置来源，已有来源配置保持不变。`;return;}
  if(b.dataset.sourceToggle){const source=sources.find(s=>s.id===b.dataset.sourceToggle);if(!source)return;const enabled=source.enabled===false;await api('sources/'+source.id,{enabled},'PATCH');await load();$('#status').textContent=`来源「${source.name}」已${enabled?'启用，将参与批量采集':'停用，批量采集会跳过它'}。`;return;}
- if(b.dataset.analyze){await runAnalysis({ids:[b.dataset.analyze],retry:true});return;}
+ if(b.dataset.analyze){await runAnalysis({ids:[b.dataset.analyze],mode:'sequential',retry:true});return;}
  const id=b.dataset.save||b.dataset.detail;if(!id)return;const i=items.find(i=>i.id===id);if(!i)return;if(b.dataset.save){await api('items/'+id,{saved:!i.saved},'PATCH');await load();return;}
  await api('items/'+id,{read:true},'PATCH');
  const analyzed=i.analysis?.status==='completed'?i.analysis:null,imported=i.importedInterpretation;
