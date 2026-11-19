@@ -66,7 +66,7 @@ Node测试使用独立内存库或临时库；浏览器流程主要使用隔离�
 
 ## 接入与开发
 
-[架构](docs/architecture.md) · [账号采集](docs/accounts.md) · [AstrBot](docs/astrbot.md) · [Whale Core](docs/whale-integration.md) · [模型管理](docs/model-management.md) · [模型费用](docs/models-and-cost.md)
+[公开信息源](docs/sources.md) · [架构](docs/architecture.md) · [账号采集](docs/accounts.md) · [AstrBot](docs/astrbot.md) · [Whale Core](docs/whale-integration.md) · [模型管理](docs/model-management.md) · [模型费用](docs/models-and-cost.md)
 
 AstrBot插件目录：`integrations/astrbot_plugin_tideline/`。整个仓库不是可直接从AstrBot“仓库安装”的插件根目录，请按接入文档复制该子目录或安装插件ZIP。
 
